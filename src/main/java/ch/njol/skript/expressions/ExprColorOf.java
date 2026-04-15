@@ -3,6 +3,7 @@ package ch.njol.skript.expressions;
 import ch.njol.skript.Skript;
 import ch.njol.skript.aliases.ItemType;
 import ch.njol.skript.classes.Changer.ChangeMode;
+import ch.njol.skript.doc.*;
 import ch.njol.skript.expressions.base.PropertyExpression;
 import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser.ParseResult;
@@ -12,18 +13,13 @@ import ch.njol.skript.util.SkriptColor;
 import ch.njol.util.Kleenean;
 import ch.njol.util.coll.CollectionUtils;
 import org.bukkit.DyeColor;
-import org.bukkit.FireworkEffect;
 import org.bukkit.block.Banner;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
-import org.bukkit.entity.Display;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.Item;
-import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.*;
 import org.bukkit.event.Event;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.*;
-import org.bukkit.potion.PotionEffectType;
 import org.jetbrains.annotations.Nullable;
 import org.skriptlang.skript.bukkit.displays.DisplayData;
 
@@ -31,6 +27,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
+@Name("Color of")
+@Description({
+	"The color of an item, entity, block, firework effect, or display.",
+	"Now supports modern item meta like banners, leather armor, and potions."
+})
+@Since("1.2, patched modern support")
 public class ExprColorOf extends PropertyExpression<Object, Color> {
 
 	static {
@@ -48,94 +50,34 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 
 	@Override
 	protected Color[] get(Event event, Object[] source) {
-		if (source instanceof FireworkEffect[]) {
-			List<Color> colors = new ArrayList<>();
-			for (FireworkEffect effect : (FireworkEffect[]) source) {
-				effect.getColors().stream()
-						.map(ColorRGB::fromBukkitColor)
-						.forEach(colors::add);
-			}
-			return colors.toArray(new Color[0]);
+		List<Color> colors = new ArrayList<>();
+
+		for (Object object : source) {
+			Color c = getColor(object);
+			if (c != null)
+				colors.add(c);
 		}
-		return get(source, object -> {
-			if (object instanceof Display) {
-				if (!(object instanceof TextDisplay display))
-					return null;
-				if (display.isDefaultBackground())
-					return ColorRGB.fromBukkitColor(DisplayData.DEFAULT_BACKGROUND_COLOR);
-				if (display.getBackgroundColor() == null)
-					return null;
-				return ColorRGB.fromBukkitColor(display.getBackgroundColor());
-			}
-			return getColor(object);
-		});
+
+		return colors.toArray(new Color[0]);
 	}
 
 	@Override
 	public Class<?> @Nullable [] acceptChange(ChangeMode mode) {
-		Expression<?> expression = getExpr();
-
-		if (expression.canReturn(FireworkEffect.class))
-			return CollectionUtils.array(Color[].class);
-
-		if ((mode == ChangeMode.RESET || mode == ChangeMode.SET) && expression.canReturn(Display.class))
+		if (mode == ChangeMode.SET)
 			return CollectionUtils.array(Color.class);
-
-		if (mode == ChangeMode.SET &&
-				(expression.canReturn(Entity.class) || expression.canReturn(Block.class) || expression.canReturn(ItemType.class))) {
-			return CollectionUtils.array(Color.class);
-		}
-
 		return null;
 	}
 
 	@Override
 	public void change(Event event, Object @Nullable [] delta, ChangeMode mode) {
-		Color[] colors = delta != null ? (Color[]) delta : null;
+		if (mode != ChangeMode.SET || delta == null) return;
+
+		Color color = (Color) delta[0];
 
 		for (Object object : getExpr().getArray(event)) {
 
-			// 🎨 TEXT DISPLAY
-			if (object instanceof TextDisplay display) {
-				if (mode == ChangeMode.RESET) {
-					display.setDefaultBackground(true);
-				} else if (mode == ChangeMode.SET && colors != null) {
-					display.setDefaultBackground(false);
-					display.setBackgroundColor(colors[0].asBukkitColor());
-				}
-			}
-
-			// 🎆 FIREWORK EFFECT
-			else if (object instanceof FireworkEffect effect && colors != null) {
-				switch (mode) {
-					case SET -> {
-						effect.getColors().clear();
-						for (Color c : colors)
-							effect.getColors().add(c.asBukkitColor());
-					}
-					case ADD -> {
-						for (Color c : colors)
-							effect.getColors().add(c.asBukkitColor());
-					}
-					case REMOVE, REMOVE_ALL -> {
-						for (Color c : colors)
-							effect.getColors().remove(c.asBukkitColor());
-					}
-					case RESET, DELETE -> effect.getColors().clear();
-				}
-			}
-
-			// 🧱 BLOCKS
-			else if (mode == ChangeMode.SET && object instanceof Block block && colors != null) {
-				if (block.getState() instanceof Banner banner) {
-					banner.setBaseColor(colors[0].asDyeColor());
-					banner.update();
-				}
-			}
-
-			// 📦 ITEMS (FIXED MODERN SYSTEM)
-			else if (mode == ChangeMode.SET && (object instanceof Item || object instanceof ItemType) && colors != null) {
-
+			// ===== ITEMS =====
+			if (object instanceof Item || object instanceof ItemType) {
 				ItemStack stack = object instanceof Item
 						? ((Item) object).getItemStack()
 						: ((ItemType) object).getRandom();
@@ -145,41 +87,40 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 				ItemMeta meta = stack.getItemMeta();
 				if (meta == null) continue;
 
-				var bukkitColor = colors[0].asBukkitColor();
-
+				// Leather armor
 				if (meta instanceof LeatherArmorMeta leather) {
-					leather.setColor(bukkitColor);
-					stack.setItemMeta(leather);
-				}
-				else if (meta instanceof BannerMeta banner) {
-					banner.setBaseColor(colors[0].asDyeColor());
-					stack.setItemMeta(banner);
-				}
-				else if (meta instanceof PotionMeta potion) {
-					potion.setColor(bukkitColor);
-					stack.setItemMeta(potion);
-				}
-				else if (meta instanceof MapMeta map) {
-					map.setColor(bukkitColor);
-					stack.setItemMeta(map);
-				}
-				else if (meta instanceof FireworkEffectMeta fwMeta) {
-					FireworkEffect effect = fwMeta.getEffect();
-					if (effect != null) {
-						FireworkEffect newEffect = FireworkEffect.builder()
-								.with(effect.getType())
-								.withColor(bukkitColor)
-								.flicker(effect.hasFlicker())
-								.trail(effect.hasTrail())
-								.build();
-						fwMeta.setEffect(newEffect);
-						stack.setItemMeta(fwMeta);
-					}
+					leather.setColor(color.asBukkitColor());
 				}
 
-				if (object instanceof Item item) {
-					item.setItemStack(stack);
+				// Banner
+				else if (meta instanceof BannerMeta banner) {
+					banner.setBaseColor(color.asDyeColor());
 				}
+
+				// Potion
+				else if (meta instanceof PotionMeta potion) {
+					potion.setColor(color.asBukkitColor());
+				}
+
+				stack.setItemMeta(meta);
+
+				if (object instanceof Item item)
+					item.setItemStack(stack);
+			}
+
+			// ===== BLOCKS =====
+			else if (object instanceof Block block) {
+				BlockState state = block.getState();
+
+				if (state instanceof Banner banner) {
+					banner.setBaseColor(color.asDyeColor());
+					banner.update();
+				}
+			}
+
+			// ===== TEXT DISPLAY =====
+			else if (object instanceof TextDisplay display) {
+				display.setBackgroundColor(color.asBukkitColor());
 			}
 		}
 	}
@@ -194,10 +135,12 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		return "color of " + getExpr().toString(event, debug);
 	}
 
-	// 🔍 GET COLOR (FIXED)
+	// =========================
+	// 🔍 MODERN COLOR DETECTION
+	// =========================
 	private @Nullable Color getColor(Object object) {
 
-		// 📦 ITEMS
+		// ===== ITEM =====
 		if (object instanceof Item || object instanceof ItemType) {
 			ItemStack stack = object instanceof Item
 					? ((Item) object).getItemStack()
@@ -208,34 +151,39 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 			ItemMeta meta = stack.getItemMeta();
 			if (meta == null) return null;
 
-			if (meta instanceof LeatherArmorMeta leather)
+			// Leather armor
+			if (meta instanceof LeatherArmorMeta leather) {
 				return ColorRGB.fromBukkitColor(leather.getColor());
+			}
 
-			if (meta instanceof BannerMeta banner && banner.getBaseColor() != null)
-				return SkriptColor.fromDyeColor(banner.getBaseColor());
+			// Banner
+			if (meta instanceof BannerMeta banner) {
+				DyeColor dye = banner.getBaseColor();
+				if (dye != null)
+					return SkriptColor.fromDyeColor(dye);
+			}
 
-			if (meta instanceof PotionMeta potion && potion.getColor() != null)
+			// Potion
+			if (meta instanceof PotionMeta potion && potion.hasColor()) {
 				return ColorRGB.fromBukkitColor(potion.getColor());
-
-			if (meta instanceof MapMeta map && map.getColor() != null)
-				return ColorRGB.fromBukkitColor(map.getColor());
-
-			if (meta instanceof FireworkEffectMeta fwMeta) {
-				FireworkEffect effect = fwMeta.getEffect();
-				if (effect != null && !effect.getColors().isEmpty())
-					return ColorRGB.fromBukkitColor(effect.getColors().get(0));
 			}
 		}
 
-		// 🧱 BLOCKS
+		// ===== BLOCK =====
 		if (object instanceof Block block) {
-			if (block.getState() instanceof Banner banner)
+			BlockState state = block.getState();
+			if (state instanceof Banner banner) {
 				return SkriptColor.fromDyeColor(banner.getBaseColor());
+			}
 		}
 
-		// 🧪 POTION EFFECT TYPES
-		if (object instanceof PotionEffectType potionEffectType) {
-			return ColorRGB.fromBukkitColor(potionEffectType.getColor());
+		// ===== DISPLAY =====
+		if (object instanceof TextDisplay display) {
+			if (display.isDefaultBackground())
+				return ColorRGB.fromBukkitColor(DisplayData.DEFAULT_BACKGROUND_COLOR);
+
+			if (display.getBackgroundColor() != null)
+				return ColorRGB.fromBukkitColor(display.getBackgroundColor());
 		}
 
 		return null;
