@@ -1,10 +1,12 @@
 package ch.njol.skript.expressions;
 
+import ch.njol.skript.Skript;
 import ch.njol.skript.aliases.ItemType;
 import ch.njol.skript.classes.Changer.ChangeMode;
 import ch.njol.skript.doc.*;
 import ch.njol.skript.expressions.base.PropertyExpression;
 import ch.njol.skript.lang.Expression;
+import ch.njol.skript.lang.ExpressionType;
 import ch.njol.skript.lang.SkriptParser.ParseResult;
 import ch.njol.skript.util.Color;
 import ch.njol.skript.util.ColorRGB;
@@ -30,8 +32,12 @@ import org.jetbrains.annotations.Nullable;
 public class ExprColorOf extends PropertyExpression<Object, Color> {
 
 	static {
-		register(ExprColorOf.class, Color.class,
-			"colo[u]r[s] of %objects%");
+		Skript.registerExpression(
+			ExprColorOf.class,
+			Color.class,
+			ExpressionType.PROPERTY,
+			"colo[u]r[s] of %objects%"
+		);
 	}
 
 	@Override
@@ -63,7 +69,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		}
 
 		// =========================
-		// BLOCK (BANNER)
+		// BLOCK (BANNERS ONLY)
 		// =========================
 		if (obj instanceof Block block) {
 			BlockState state = block.getState();
@@ -91,7 +97,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		}
 
 		// =========================
-		// FIREWORK (read-only)
+		// FIREWORK (READ ONLY)
 		// =========================
 		if (obj instanceof FireworkEffect effect) {
 			if (effect.getColors().isEmpty())
@@ -104,7 +110,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 	}
 
 	// =========================
-	// ITEM COLOR HANDLING (1.21 SAFE)
+	// ITEM COLOR (1.21 SAFE)
 	// =========================
 	private Color getItemColor(ItemStack stack) {
 		if (stack == null)
@@ -114,7 +120,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		if (meta == null)
 			return null;
 
-		// Banner item support
+		// Banner item
 		if (meta instanceof BlockStateMeta stateMeta) {
 			if (stateMeta.getBlockState() instanceof Banner banner) {
 				DyeColor dye = banner.getBaseColor();
@@ -122,14 +128,11 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 			}
 		}
 
-		// 1.21 Dyeable items (leather armor etc.)
-		try {
-			org.bukkit.inventory.meta.Dyeable dyeable = (org.bukkit.inventory.meta.Dyeable) meta;
-
+		// 1.21 Dyeable items (leather armor, etc.)
+		if (meta instanceof org.bukkit.inventory.meta.Dyeable dyeable) {
 			if (dyeable.hasColor()) {
 				return ColorRGB.fromBukkitColor(dyeable.getColor());
 			}
-		} catch (ClassCastException ignored) {
 		}
 
 		return null;
@@ -165,10 +168,10 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 			// =========================
 			// BLOCK (BANNERS ONLY)
 			// =========================
-			if (obj instanceof Block block) {
+			if (obj instanceof Block block && color != null) {
 				BlockState state = block.getState();
 
-				if (state instanceof Banner banner && color != null) {
+				if (state instanceof Banner banner) {
 					banner.setBaseColor(color.asDyeColor());
 					banner.update(true);
 				}
@@ -184,11 +187,8 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 				ItemMeta meta = stack.getItemMeta();
 
 				if (meta instanceof org.bukkit.inventory.meta.Dyeable dyeable) {
-					try {
-						dyeable.setColor(color.asBukkitColor());
-						stack.setItemMeta(meta);
-					} catch (ClassCastException ignored) {
-					}
+					dyeable.setColor(color.asBukkitColor());
+					stack.setItemMeta(meta);
 				}
 
 				item.setItemStack(stack);
