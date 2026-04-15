@@ -162,6 +162,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 					display.setDefaultBackground(false);
 					display.setBackgroundColor(color.asBukkitColor());
 				}
+org.bukkit.inventory.meta.Dyeable
 				continue;
 			}
 
