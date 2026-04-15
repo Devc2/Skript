@@ -21,11 +21,12 @@ import org.bukkit.block.Banner;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.entity.Display;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.Event;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.BlockStateMeta;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.material.Colorable;
 import org.bukkit.material.MaterialData;
 import org.bukkit.potion.PotionEffectType;
@@ -38,209 +39,235 @@ import java.util.function.Consumer;
 
 @Name("Color of")
 @Description({
-	"The <a href='#color'>color</a> of an item, entity, block, firework effect, or text display.",
-	"This can also be used to color chat messages with \"&lt;%color of ...%&gt;this text is colored!\".",
-	"Do note that firework effects support setting, adding, removing, resetting, and deleting; text displays support " +
-	"setting and resetting; and items, entities, and blocks only support setting, and only for very few items/blocks."
+        "The color of an item, entity, block, firework effect, or text display.",
+        "Supports setting and getting colors for multiple Minecraft objects."
 })
 @Example("""
-	on click on wool:
-		if event-block is tagged with minecraft tag "wool":
-			message "This wool block is <%color of block%>%color of block%<reset>!"
-			set the color of the block to black
-	""")
-@Since("1.2, 2.10 (displays)")
+        on click on wool:
+            if event-block is tagged with minecraft tag "wool":
+                message "This wool block is <%color of block%>%color of block%<reset>!"
+                set the color of the block to black
+""")
+@Since("1.2, 2.10 (displays), 1.21.11 compatibility patch")
 public class ExprColorOf extends PropertyExpression<Object, Color> {
 
-	static {
-		String types = "blocks/itemtypes/entities/fireworkeffects/potioneffecttypes";
-		if (Skript.isRunningMinecraft(1, 19, 4))
-			types += "/displays";
-		register(ExprColorOf.class, Color.class, "colo[u]r[s]", types);
-	}
+    static {
+        String types = "blocks/itemtypes/entities/fireworkeffects/potioneffecttypes";
+        if (Skript.isRunningMinecraft(1, 19, 4))
+            types += "/displays";
+        register(ExprColorOf.class, Color.class, "colo[u]r[s]", types);
+    }
 
-	@Override
-	public boolean init(Expression<?>[] exprs, int matchedPattern, Kleenean isDelayed, ParseResult parseResult) {
-		setExpr(exprs[0]);
-		return true;
-	}
+    @Override
+    public boolean init(Expression<?>[] exprs, int matchedPattern, Kleenean isDelayed, ParseResult parseResult) {
+        setExpr(exprs[0]);
+        return true;
+    }
 
-	@Override
-	protected Color[] get(Event event, Object[] source) {
-		if (source instanceof FireworkEffect[]) {
-			List<Color> colors = new ArrayList<>();
-			for (FireworkEffect effect : (FireworkEffect[]) source) {
-				effect.getColors().stream()
-					.map(ColorRGB::fromBukkitColor)
-					.forEach(colors::add);
-			}
-			return colors.toArray(new Color[0]);
-		}
-		return get(source, object -> {
-			if (object instanceof Display) {
-				if (!(object instanceof TextDisplay display))
-					return null;
-				if (display.isDefaultBackground())
-					return ColorRGB.fromBukkitColor(DisplayData.DEFAULT_BACKGROUND_COLOR);
-				org.bukkit.Color bukkitColor = display.getBackgroundColor();
-				if (bukkitColor == null)
-					return null;
-				return ColorRGB.fromBukkitColor(bukkitColor);
-			}
-			return getColor(object);
-		});
-	}
+    // =========================
+    // GET
+    // =========================
+    @Override
+    protected Color[] get(Event event, Object[] source) {
 
-	@Override
-	public Class<?> @Nullable [] acceptChange(ChangeMode mode) {
-		Expression<?> expression = getExpr();
+        if (source instanceof FireworkEffect[]) {
+            List<Color> colors = new ArrayList<>();
+            for (FireworkEffect effect : (FireworkEffect[]) source) {
+                effect.getColors().stream()
+                        .map(ColorRGB::fromBukkitColor)
+                        .forEach(colors::add);
+            }
+            return colors.toArray(new Color[0]);
+        }
 
-		if (expression.canReturn(FireworkEffect.class))
-			return CollectionUtils.array(Color[].class);
+        return get(source, object -> {
 
-		if ((mode == ChangeMode.RESET || mode == ChangeMode.SET) && expression.canReturn(Display.class))
-			return CollectionUtils.array(Color.class);
+            // =========================
+            // DISPLAY SUPPORT
+            // =========================
+            if (object instanceof Display display) {
+                if (!(display instanceof TextDisplay text))
+                    return null;
 
-		if (mode == ChangeMode.SET &&
-			(expression.canReturn(Entity.class) || expression.canReturn(Block.class) || expression.canReturn(ItemType.class))) {
-			return CollectionUtils.array(Color.class);
-		}
+                if (text.isDefaultBackground())
+                    return ColorRGB.fromBukkitColor(DisplayData.DEFAULT_BACKGROUND_COLOR);
 
-		return null;
-	}
+                org.bukkit.Color c = text.getBackgroundColor();
+                return c != null ? ColorRGB.fromBukkitColor(c) : null;
+            }
 
-	@Override
-	@SuppressWarnings("removal")
-	public void change(Event event, Object @Nullable [] delta, ChangeMode mode) {
-		Color[] colors = delta != null ? (Color[]) delta : null;
-		Consumer<TextDisplay> displayChanger = getDisplayChanger(mode, colors);
-		Consumer<FireworkEffect> fireworkChanger = getFireworkChanger(mode, colors);
-		for (Object object : getExpr().getArray(event)) {
-			if (object instanceof TextDisplay display) {
-				displayChanger.accept(display);
-			} else if (object instanceof FireworkEffect effect) {
-				fireworkChanger.accept(effect);
-			} else if (mode == ChangeMode.SET && (object instanceof Block || object instanceof Colorable)) {
-				assert colors[0] != null;
-				Colorable colorable = getColorable(object);
-				if (colorable != null) {
-					try {
-						colorable.setColor(colors[0].asDyeColor());
-					} catch (UnsupportedOperationException ex) {
-						// https://github.com/SkriptLang/Skript/issues/2931
-						Skript.error("Tried setting the color of a bed, but this isn't possible in your Minecraft version, " +
-							"since different colored beds are different materials. " +
-							"Instead, set the block to right material, such as a blue bed."); // Let's just assume it's a bed
-					}
-				} else {
-					if (object instanceof Block block) {
-						if (block.getState() instanceof Banner banner)
-							banner.setBaseColor(colors[0].asDyeColor());
-					}
-				}
-			} else if (mode == ChangeMode.SET && (object instanceof Item || object instanceof ItemType)) {
-				assert colors[0] != null;
-				ItemStack stack = object instanceof Item ? ((Item) object).getItemStack() : ((ItemType) object).getRandom();
-				if (stack == null)
-					continue;
-				MaterialData data = stack.getData();
-				if (!(data instanceof Colorable colorable))
-					continue;
-				colorable.setColor(colors[0].asDyeColor());
-				stack.setData(data);
-				if (object instanceof Item item) {
-					item.setItemStack(stack);
-				}
-			}
-		}
-	}
+            return getColor(object);
+        });
+    }
 
-	@Override
-	public Class<? extends Color> getReturnType() {
-		return Color.class;
-	}
+    // =========================
+    // CHANGE SUPPORT
+    // =========================
+    @Override
+    public Class<?> @Nullable [] acceptChange(ChangeMode mode) {
+        Expression<?> expr = getExpr();
 
-	@Override
-	public String toString(@Nullable Event event, boolean debug) {
-		return "color of " + getExpr().toString(event, debug);
-	}
+        if (expr.canReturn(FireworkEffect.class))
+            return CollectionUtils.array(Color[].class);
 
-	private Consumer<TextDisplay> getDisplayChanger(ChangeMode mode, Color @Nullable [] colors) {
-		Color color = (colors != null && colors.length == 1) ? colors[0] : null;
-		return switch (mode) {
-			case RESET -> display -> {
-				display.setDefaultBackground(true);
-			};
-			case SET -> display -> {
-				if (color != null) {
-					if (display.isDefaultBackground())
-						display.setDefaultBackground(false);
-					display.setBackgroundColor(color.asBukkitColor());
-				}
-			};
-			default -> display -> {};
-		};
-	}
+        if ((mode == ChangeMode.RESET || mode == ChangeMode.SET) && expr.canReturn(Display.class))
+            return CollectionUtils.array(Color.class);
 
-	private Consumer<FireworkEffect> getFireworkChanger(ChangeMode mode, Color @Nullable [] colors) {
-		return switch (mode) {
-			case ADD -> effect -> {
-				for (Color color : colors)
-					effect.getColors().add(color.asBukkitColor());
-			};
-			case REMOVE, REMOVE_ALL -> effect -> {
-				for (Color color : colors)
-					effect.getColors().remove(color.asBukkitColor());
-			};
-			case DELETE, RESET -> effect -> {
-				effect.getColors().clear();
-			};
-			case SET -> effect -> {
-				effect.getColors().clear();
-				for (Color color : colors)
-					effect.getColors().add(color.asBukkitColor());
-			};
-			default -> effect -> {};
-		};
-	}
+        if (mode == ChangeMode.SET &&
+                (expr.canReturn(Block.class) ||
+                        expr.canReturn(ItemType.class) ||
+                        expr.canReturn(Item.class))) {
+            return CollectionUtils.array(Color.class);
+        }
 
-	@SuppressWarnings({"removal"})
-	private @Nullable Colorable getColorable(Object colorable) {
-		if (colorable instanceof Item || colorable instanceof ItemType) {
-			ItemStack item = colorable instanceof Item ?
-					((Item) colorable).getItemStack() : ((ItemType) colorable).getRandom();
+        return null;
+    }
 
-			if (item == null)
-				return null;
-			MaterialData data = item.getData();
-			if (data instanceof Colorable)
-				return (Colorable) data;
-		} else if (colorable instanceof Block) {
-			BlockState state = ((Block) colorable).getState();
-			if (state instanceof Colorable)
-				return (Colorable) state;
-		} else if (colorable instanceof Colorable) {
-			return (Colorable) colorable;
-		}
-		return null;
-	}
+    // =========================
+    // CHANGE IMPLEMENTATION
+    // =========================
+    @Override
+    @SuppressWarnings("removal")
+    public void change(Event event, Object @Nullable [] delta, ChangeMode mode) {
 
-	private @Nullable Color getColor(Object object) {
-		Colorable colorable = getColorable(object);
-		if (colorable != null) {
-			DyeColor dyeColor = colorable.getColor();
-			if (dyeColor == null)
-				return null;
-			return SkriptColor.fromDyeColor(dyeColor);
-		}
-		if (object instanceof Block block) {
-			if (block.getState() instanceof Banner banner)
-				return SkriptColor.fromDyeColor(banner.getBaseColor());
-		}
-		if (object instanceof PotionEffectType potionEffectType) {
-			return ColorRGB.fromBukkitColor(potionEffectType.getColor());
-		}
-		return null;
-	}
+        Color[] colors = delta != null ? (Color[]) delta : null;
 
+        Consumer<TextDisplay> displayChanger = getDisplayChanger(mode, colors);
+        Consumer<FireworkEffect> fireworkChanger = getFireworkChanger(mode, colors);
+
+        for (Object object : getExpr().getArray(event)) {
+
+            // =========================
+            // TEXT DISPLAY
+            // =========================
+            if (object instanceof TextDisplay display) {
+                displayChanger.accept(display);
+                continue;
+            }
+
+            // =========================
+            // FIREWORK EFFECT
+            // =========================
+            if (object instanceof FireworkEffect effect) {
+                fireworkChanger.accept(effect);
+                continue;
+            }
+
+            // =========================
+            // BLOCK COLOR (1.21 FIX HERE)
+            // =========================
+            if (mode == ChangeMode.SET && object instanceof Block block) {
+                if (block.getState() instanceof Banner banner && colors != null) {
+                    banner.setBaseColor(colors[0].asDyeColor());
+                    banner.update();
+                }
+                continue;
+            }
+
+            // =========================
+            // ITEM COLOR (1.21 FIX)
+            // =========================
+            if (mode == ChangeMode.SET && (object instanceof Item || object instanceof ItemType)) {
+
+                ItemStack stack = object instanceof Item
+                        ? ((Item) object).getItemStack()
+                        : ((ItemType) object).getRandom();
+
+                if (stack == null || colors == null)
+                    continue;
+
+                ItemMeta meta = stack.getItemMeta();
+
+                if (meta instanceof BlockStateMeta blockStateMeta) {
+                    BlockState state = blockStateMeta.getBlockState();
+
+                    if (state instanceof Banner banner) {
+                        banner.setBaseColor(colors[0].asDyeColor());
+                        banner.update();
+
+                        blockStateMeta.setBlockState(banner);
+                        stack.setItemMeta(blockStateMeta);
+                    }
+                }
+
+                if (object instanceof Item itemEntity) {
+                    itemEntity.setItemStack(stack);
+                }
+            }
+        }
+    }
+
+    // =========================
+    // RETURN TYPE
+    // =========================
+    @Override
+    public Class<? extends Color> getReturnType() {
+        return Color.class;
+    }
+
+    @Override
+    public String toString(@Nullable Event event, boolean debug) {
+        return "color of " + getExpr().toString(event, debug);
+    }
+
+    // =========================
+    // DISPLAY HANDLER
+    // =========================
+    private Consumer<TextDisplay> getDisplayChanger(ChangeMode mode, Color @Nullable [] colors) {
+        Color color = (colors != null && colors.length == 1) ? colors[0] : null;
+
+        return switch (mode) {
+            case RESET -> display -> display.setDefaultBackground(true);
+            case SET -> display -> {
+                if (color != null) {
+                    if (display.isDefaultBackground())
+                        display.setDefaultBackground(false);
+                    display.setBackgroundColor(color.asBukkitColor());
+                }
+            };
+            default -> display -> {};
+        };
+    }
+
+    // =========================
+    // FIREWORK HANDLER
+    // =========================
+    private Consumer<FireworkEffect> getFireworkChanger(ChangeMode mode, Color @Nullable [] colors) {
+        return switch (mode) {
+            case ADD -> effect -> {
+                for (Color c : colors)
+                    effect.getColors().add(c.asBukkitColor());
+            };
+            case REMOVE, REMOVE_ALL -> effect -> {
+                for (Color c : colors)
+                    effect.getColors().remove(c.asBukkitColor());
+            };
+            case DELETE, RESET -> effect -> effect.getColors().clear();
+            case SET -> effect -> {
+                effect.getColors().clear();
+                for (Color c : colors)
+                    effect.getColors().add(c.asBukkitColor());
+            };
+            default -> effect -> {};
+        };
+    }
+
+    // =========================
+    // COLOR RESOLVER (1.21 FIXED BANNER ACCESS)
+    // =========================
+    private @Nullable Color getColor(Object object) {
+
+        // BLOCK / ITEM COLORABLE
+        if (object instanceof Block block) {
+            if (block.getState() instanceof Banner banner)
+                return SkriptColor.fromDyeColor(banner.getBaseColor());
+        }
+
+        // POTION COLOR
+        if (object instanceof PotionEffectType potionEffectType) {
+            return ColorRGB.fromBukkitColor(potionEffectType.getColor());
+        }
+
+        return null;
+    }
 }
