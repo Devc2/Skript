@@ -1,6 +1,5 @@
 package ch.njol.skript.expressions;
 
-import ch.njol.skript.Skript;
 import ch.njol.skript.aliases.ItemType;
 import ch.njol.skript.classes.Changer.ChangeMode;
 import ch.njol.skript.doc.*;
@@ -24,8 +23,6 @@ import org.bukkit.inventory.meta.BlockStateMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.Consumer;
-
 @Name("Color of")
 @Description("Gets or sets the color of blocks, items, banners, firework effects, and text displays.")
 @Example("set color of player's tool to red")
@@ -34,7 +31,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 
 	static {
 		register(ExprColorOf.class, Color.class,
-			"colo[u]r[s] of %blocks/itemtypes/entities/fireworkeffects/displays%");
+			"colo[u]r[s] of %objects%");
 	}
 
 	@Override
@@ -61,11 +58,12 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		if (obj instanceof TextDisplay display) {
 			if (display.isDefaultBackground())
 				return null;
+
 			return ColorRGB.fromBukkitColor(display.getBackgroundColor());
 		}
 
 		// =========================
-		// BLOCK (BANNERS ONLY)
+		// BLOCK (BANNER)
 		// =========================
 		if (obj instanceof Block block) {
 			BlockState state = block.getState();
@@ -93,17 +91,21 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		}
 
 		// =========================
-		// FIREWORK EFFECT
+		// FIREWORK (read-only)
 		// =========================
 		if (obj instanceof FireworkEffect effect) {
 			if (effect.getColors().isEmpty())
 				return null;
+
 			return ColorRGB.fromBukkitColor(effect.getColors().get(0));
 		}
 
 		return null;
 	}
 
+	// =========================
+	// ITEM COLOR HANDLING (1.21 SAFE)
+	// =========================
 	private Color getItemColor(ItemStack stack) {
 		if (stack == null)
 			return null;
@@ -112,7 +114,7 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 		if (meta == null)
 			return null;
 
-		// Banner item
+		// Banner item support
 		if (meta instanceof BlockStateMeta stateMeta) {
 			if (stateMeta.getBlockState() instanceof Banner banner) {
 				DyeColor dye = banner.getBaseColor();
@@ -120,12 +122,14 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 			}
 		}
 
-		// Leather armor / dyeable items (1.21)
+		// 1.21 Dyeable items (leather armor etc.)
 		try {
-			if (meta.hasColor()) {
-				return ColorRGB.fromBukkitColor(meta.getColor());
+			org.bukkit.inventory.meta.Dyeable dyeable = (org.bukkit.inventory.meta.Dyeable) meta;
+
+			if (dyeable.hasColor()) {
+				return ColorRGB.fromBukkitColor(dyeable.getColor());
 			}
-		} catch (Throwable ignored) {
+		} catch (ClassCastException ignored) {
 		}
 
 		return null;
@@ -145,7 +149,9 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 
 		for (Object obj : getExpr().getArray(event)) {
 
+			// =========================
 			// TEXT DISPLAY
+			// =========================
 			if (obj instanceof TextDisplay display) {
 				if (mode == ChangeMode.RESET) {
 					display.setDefaultBackground(true);
@@ -156,7 +162,9 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 				continue;
 			}
 
+			// =========================
 			// BLOCK (BANNERS ONLY)
+			// =========================
 			if (obj instanceof Block block) {
 				BlockState state = block.getState();
 
@@ -167,14 +175,20 @@ public class ExprColorOf extends PropertyExpression<Object, Color> {
 				continue;
 			}
 
-			// ITEMS
+			// =========================
+			// ITEM ENTITY
+			// =========================
 			if (obj instanceof Item item && color != null) {
+
 				ItemStack stack = item.getItemStack();
 				ItemMeta meta = stack.getItemMeta();
 
-				if (meta != null && meta.hasColor()) {
-					meta.setColor(color.asBukkitColor());
-					stack.setItemMeta(meta);
+				if (meta instanceof org.bukkit.inventory.meta.Dyeable dyeable) {
+					try {
+						dyeable.setColor(color.asBukkitColor());
+						stack.setItemMeta(meta);
+					} catch (ClassCastException ignored) {
+					}
 				}
 
 				item.setItemStack(stack);
